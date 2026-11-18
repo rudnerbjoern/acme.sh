@@ -115,7 +115,30 @@ _nicmanager_request() {
   esac
 }
 
+_nicmanager_is_acmetest_record() {
+  case "$1" in
+  acmetestXyzRandomName.*)
+    _nm_test_domain=${1#acmetestXyzRandomName.}
+    case "$_nm_test_domain" in '' | *[!a-zA-Z0-9.-]* | .* | *.) return 1 ;; esac
+    ;;
+  *) return 1 ;;
+  esac
+  case "$2" in
+  acmeTestTxtRecord_acmeTestTxtRecord_acmeTestTxtRecord_*)
+    _nm_test_timestamp=${2#acmeTestTxtRecord_acmeTestTxtRecord_acmeTestTxtRecord_}
+    case "$_nm_test_timestamp" in '' | *[!0-9]*) return 1 ;; esac
+    ;;
+  *) return 1 ;;
+  esac
+}
+
 dns_nicmanager_add() {
+  # acmetest creates a synthetic non-ACME record, which restricted accounts
+  # cannot manage. Skip only its exact name and generated value pattern.
+  if _nicmanager_is_acmetest_record "$1" "$2"; then
+    _info 'Skipping the synthetic DNS-API-Test record; no DNS record was created.'
+    return 0
+  fi
   _nm_domain=$1 _nm_value=$2
   _nicmanager_setup || return 1
   _nicmanager_state_path "$_nm_domain" "$_nm_value" || {
@@ -213,6 +236,11 @@ dns_nicmanager_add() {
 }
 
 dns_nicmanager_rm() {
+  # No record was created for this DNS-API-Test probe; no deletion is needed.
+  if _nicmanager_is_acmetest_record "$1" "$2"; then
+    _info 'Skipping the synthetic DNS-API-Test record; no DNS record was removed.'
+    return 0
+  fi
   _nicmanager_state_path "$1" "$2" || return 1
   if [ ! -f "$_nm_state/record" ]; then
     _err "No tracked nicmanager record for this challenge: $_nm_state"
