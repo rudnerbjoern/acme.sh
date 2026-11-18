@@ -1,12 +1,19 @@
 #!/usr/bin/env sh
 # nicmanager DNS-01 provider for acme.sh; record IDs are kept for cleanup.
+# shellcheck disable=SC2034
 
 dns_nicmanager_info='nicmanager AnycastDNS API
- NICMANAGER_USERNAME API username
- NICMANAGER_PASSWORD API password
- NICMANAGER_TOTP_SECRET Base32 TOTP secret (optional)
- NICMANAGER_ZONE Explicit DNS zone (optional)'
-export dns_nicmanager_info
+Site: nicmanager.com
+Docs: github.com/acmesh-official/acme.sh/wiki/dnsapi2#dns_nicmanager
+Options:
+ NICMANAGER_USERNAME API username.
+ NICMANAGER_PASSWORD API password.
+ NICMANAGER_TOTP_SECRET Base32 TOTP secret. Optional.
+ NICMANAGER_ZONE Explicit DNS zone. Optional.
+ NICMANAGER_USE_ENV Use environment credentials without saving them. Optional.
+Issues: github.com/acmesh-official/acme.sh/issues
+Author: @rudnerbjoern
+'
 
 _nicmanager_totp() {
   _nm_secret=$(printf '%s' "$1" | LC_ALL=C tr '[:lower:]' '[:upper:]' | tr -d ' =')
@@ -27,8 +34,17 @@ _nicmanager_totp() {
   done
   [ -n "$_nm_key" ] || return 1
   _nm_counter=$(($(date +%s) / 30))
-  # FreeBSD printf stops at NUL when processing %b; awk emits all eight bytes.
-  _nm_mac=$(LC_ALL=C awk -v counter="$_nm_counter" 'BEGIN { for (i = 7; i >= 0; i--) printf "%c", int(counter / (2 ^ (8 * i))) % 256 }' | openssl dgst -sha1 -mac HMAC -macopt "hexkey:$_nm_key" | sed 's/^.*= //') || return 1
+  # Convert the eight-byte big-endian counter to Base64 using only shell text.
+  # Decoding it directly into OpenSSL avoids NUL bytes in shell variables.
+  _nm_b64_alphabet=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
+  _nm_ctr_b64=
+  for _nm_shift in 58 52 46 40 34 28 22 16 10 4; do
+    _nm_index=$(((_nm_counter >> _nm_shift) & 63))
+    _nm_ctr_b64="$_nm_ctr_b64$(printf '%s' "$_nm_b64_alphabet" | cut -c "$((_nm_index + 1))")"
+  done
+  _nm_index=$(((_nm_counter & 15) << 2))
+  _nm_ctr_b64="$_nm_ctr_b64$(printf '%s' "$_nm_b64_alphabet" | cut -c "$((_nm_index + 1))")="
+  _nm_mac=$(printf '%s' "$_nm_ctr_b64" | _dbase64 | ${ACME_OPENSSL_BIN:-openssl} dgst -sha1 -mac HMAC -macopt "hexkey:$_nm_key" | sed 's/^.*= //') || return 1
   case "$_nm_mac" in *[!0-9a-fA-F]*|'') return 1 ;; esac
   [ "${#_nm_mac}" -eq 40 ] || return 1
   _nm_last=${_nm_mac#???????????????????????????????????????}
